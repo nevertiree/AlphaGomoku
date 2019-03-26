@@ -1,0 +1,212 @@
+# -*- coding: utf-8 -*-
+""" A pure implementation of the Monte Carlo Tree Search. """
+
+import numpy as np
+import copy
+
+from env.gomoku import Gomoku
+from agent import meta_player
+from agent.mcts_node import Node
+
+
+class MCTS(object):
+    """A simple implementation of Monte Carlo Tree Search.
+        Monte Carlo Tree Search has 4 main steps:
+        -- Selection Phase
+        -- Expansion Phase
+        -- Simulation Phase
+        -- Update Phase
+
+        Here, we integrate [Selection] and [Expansion] into Func TreePolicy,
+        then implement the [Simulation] phase in Func DefaultPolicy,
+        finally implement the [Update] phase in Func Backup.
+    """
+
+    def __init__(self, env, c=5, simulation_num=500):
+        """
+            :arg c: hyper-parameter of UCB exploration.
+                A number in (0, inf) that controls how quickly exploration
+                converges to the maximum-value policy. A higher value means
+                relying on the prior more.
+            :arg simulation_num: number of simulation.
+        """
+
+        self.root = Node(None)
+        self.env = copy.deepcopy(env)
+        self.c = c  # hyper-parameter of UCB exploration.
+        self.train_episode = simulation_num
+
+        self.last_move = -1
+
+    def search_action(self, state, train_mode=True):
+        """ Runs all play-outs sequentially and returns the most visited action.
+
+            :arg state: dict
+                Complete game information, include:
+                ['state']: board state,
+                ['action']: available action lists,
+                ['terminal']: bool, whether reach terminal,
+                ['reward']: int, complete reward in the game.
+                ['last_move']: int,last move in current episode.
+
+            :arg train_mode: boolean
+                Whether train model before feedback.
+
+            :return: selected action. """
+
+        # Update current tree node according to opponent's last move.
+        self.clone(state)
+        self.update_current_node(state["last_move"])
+
+        root = self.root
+
+        # Training
+        if train_mode:
+            for _ in range(self.train_episode):
+                self.train(state=state, env=copy.deepcopy(self.env))
+
+        # Select the most visited action.
+        selected_action = self.select_next_move(root)
+        self.last_move = selected_action
+
+        # Update current tree node according to selected action.
+        self.update_current_node(self.last_move)
+
+        return selected_action
+
+    def update_current_node(self, last_move):
+        """ Update current tree node to its child node according to the lasted move.
+            :arg last_move: int
+                The latest move in current episode. """
+
+        # Initialize root node.
+        if last_move == -1:
+            self.root = Node(None)
+            return
+
+        # Update root node.
+        if last_move in self.root.children:
+            self.root = self.root.children[last_move]
+            self.root.parent = None
+        else:
+            self.root = Node(None)  # Create a new child node.
+
+    def train(self, state, env):
+        """ Run a single episode from the root to the leaf,
+            getting a value at the leaf and propagating it back through its parents.
+
+            :arg state: the complete game state in current time step,
+                        including board state, valid/invalid action space, etc.
+            :arg env: copied game environment.
+        """
+        node = self.root
+
+        """ [Selection Phase] 
+             Starting at the root node, a tree policy based on the action values
+             attached to the edges of the tree traverses the tree to select a leaf node.
+        """
+        while True:
+            if not node.is_leaf() and node.is_full_expanded(len(state['action'])):
+                action, node = node.select(self.c)  # Greedy select next move.
+                state = env.step(action)  # Execute action
+            else:
+                break  # Start expanding.
+
+        """ [Expansion Phase]
+            On some iterations the tree is expanded from the selected leaf node by 
+            adding one or more child nodes reached from the selected node via unexplored actions.
+        """
+        if len(state["action"]) == 0:
+            return
+        else:
+            action = np.random.choice(state["action"])
+
+        node.expand(action)
+        node = node.children[action]
+        state = env.step(action)
+
+        """ [Play-out Phase] 
+            From the selected node, or from one of its newly-expanded child nodes (if any), 
+            simulation of a complete episode is run with actions selected by the play-out policy. 
+            
+            The result is a Monte Carlo trial with actions selected first by 
+            the tree policy and beyond the tree by the play-out policy.
+        """
+        reward = node.play_out(state, env=env)
+
+        """ [Update Phase] 
+            The return generated by the simulated episode is backed up to update, or to initialize, 
+            the action values attached to the edges of the tree traversed by the tree policy in this
+            iteration of MCTS. No values are saved for the states and actions visited by the roll-out
+            policy beyond the tree. 
+        """
+        node.update(reward)
+
+    def select_next_move(self, node=None):
+        """ Select the most frequent visited action of current node.
+         :return: selected action, int. """
+
+        if node:
+            self.root = node
+
+        if not self.root.children:
+            raise ValueError("Current node has no sub-node. ")
+
+        value_sorted_node_list = sorted(self.root.children.items(),
+                                        key=lambda sub_node: (sub_node[1].n_wins,
+                                                              sub_node[1].n_visits,
+                                                              sub_node[1].q_value))
+        return max(value_sorted_node_list)[0]
+
+    def clone(self, state):
+        self.env.board_state = state['state']
+        self.env.available_action_space = state['action']
+        self.env.last_move = state['last_move']
+
+    def __str__(self):
+        return "Monte Carlo Tree Search"
+
+
+class MCTSMetaPlayer(meta_player.MetaPlayer):
+    """AI agent based on Monte Carlo Tree Search. """
+
+    def __init__(self, env, c=5, n_play_out=1500):
+        super(MCTSMetaPlayer, self).__init__()
+        self.mcts = MCTS(env, c, n_play_out)
+        self.player = None
+
+    def set_player_index(self, p):
+        self.player = p
+
+    def reset_player(self):
+        self.mcts.update_current_node(-1)
+
+    def select_action(self, state):
+        """ Select action according to current state. """
+
+        available_action_list = state["action"]
+
+        if len(available_action_list) == 0:
+            print("WARNING: The board is full.")
+            return -1
+
+        if state["terminal"]:
+            print("Reach Terminal.")
+            return -1
+
+        move = self.mcts.search_action(state, train_mode=True)  # Choose an action
+        print("[MCTS %s]" % move, end=" ")
+
+        return move
+
+    def __str__(self):
+        return "Monte Carlo Tree Search {}".format(self.player)
+
+
+if __name__ == '__main__':
+    gomoku = Gomoku(board_size=6, num4win=3)
+
+    for i in range(10):
+        player1 = MCTSMetaPlayer(gomoku)
+        player2 = MCTSMetaPlayer(gomoku)
+        gomoku.run(player1, player2)
