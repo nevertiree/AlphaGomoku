@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+__author__ = "vonLynnShawn"
+__copyright__ = "Copyright (C) 2019 vonLynnShawn"
+__license__ = "MIT LICENSE"
+__version__ = "1.1"
 
 from env.game import Game
 import numpy as np
@@ -101,7 +105,7 @@ class Gomoku(Game):
 
         while True:
             # Players select and execute their actions in turn.
-            action = self.players_dict[self.current_player_id].get_action(state)
+            action = self.players_dict[self.current_player_id].select_action(state)
             state = self.step(action)
 
             if state["terminal"]:  # Check whether the game is over.
@@ -182,9 +186,9 @@ class Gomoku(Game):
                 return True, player_id
 
         # 3. Check Left-Top to Right-Button
-        begin_margin = min(x, y)
-        end_margin = min(board_size-x-1, board_size-y-1)
-        oblique_range = begin_margin + end_margin - 1
+        begin_margin = min(min(x, y), num4win-1)
+        end_margin = min(min(board_size-x-1, board_size-y-1), num4win-1)
+        oblique_range = begin_margin + end_margin + 1
 
         if oblique_range >= num4win:
             terminal_trigger = 0
@@ -198,8 +202,8 @@ class Gomoku(Game):
                     return True, player_id
 
         # 4. Check Right-Top to Left-Button
-        begin_margin = min(x, board_size-y-1)
-        end_margin = min(board_size-x-1, y)
+        begin_margin = min(min(x, board_size-y-1), num4win-1)
+        end_margin = min(min(board_size-x-1, y), num4win-1)
         oblique_range = begin_margin + end_margin + 1
 
         if oblique_range >= num4win:
