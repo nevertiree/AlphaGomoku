@@ -4,36 +4,50 @@ import numpy as np
 
 
 class Node(object):
-    """A tree node in the Monte Carlo Tree Search.
-       Each node keeps track of <Q, P, u>
-       Q is its own value Q,
-       P is prior probability P,
-       u is its visit-count-adjusted prior score u.
-    """
+    """A tree node in the Monte Carlo Tree Search. """
 
     def __init__(self, parent=None):
         self.parent = parent
-        self.children = {}
+        self.children = {}  # child nodes
 
-        self.n_visits = 0
-        self.n_wins = 0
+        self.visit_num = 0  # N(s,a) is the visit count
+        self.w_value = 0  # W(s,a) is the total action-value
+        self.q_value = 0  # Q(s,a) is the mean action-value (Q-value)
 
-        self.q_value = 0  # Q-value
+        # Note that P(s,a) is used in AlphaGoZero, not in pure Monte Carlo Tree Search)
+        self.prob = 1  # P(s,a) is the prior probability of selecting this node
 
     def select(self, c=5):
-        """ [Select phase] Return an action according to UCB value.
+        """ [Select phase]
+            Select action according to the statistics in the search tree,
 
-            :arg c: hyper-parameter to balance exploitation and exploration.
+            a = arg_max_{a} Q(s_t,a)+ U(s_t,a)
+            where U(s_t,a) uses UCT algorithm or P_UCT algorithm.
+
+            :arg c: constant, a hyper-parameter determine the level of exploration.
             :return <action, next_node> tuple """
 
-        # Select a child-node according to UCB value.
         return max(self.children.items(),
                    key=lambda act_node: act_node[1].get_ucb(c))
 
-    def expand(self, action):
-        """ [Expand phase] Create new child-node.
-        :arg action: action to be expanded. """
-        self.children[action] = Node(self)
+    def expand(self, action, is_full_expand=False):
+        """ [Expand phase]
+            Expand leaf node and initialize child nodes.
+
+            :arg action: int or list
+                Action(s) to be expanded.
+            :arg is_full_expand: bool
+                Determine using full expansion or dynamic expansion.
+        """
+        if is_full_expand:  # Full Expansion
+            if isinstance(action, list):
+                raise TypeError("Full expansion need an action list, but got ", type(action))
+            for a in action:
+                self.children[a] = Node(self)
+        else:  # Dynamic Expansion
+            if isinstance(action, int):
+                raise TypeError("Full expansion need an integer action, but got ", type(action))
+            self.children[action] = Node(self)
 
     @staticmethod
     def play_out(state, env, limit=1000):
@@ -72,29 +86,29 @@ class Node(object):
         return ((-1) ** (count+1)) * state["reward"]
 
     def update(self, reward):
-        """ [Update phase] Update node values from leaf evaluation.
-            :arg reward: the value of subtree evaluation from the current agent's perspective. """
+        """ [Update phase]
+            The node statistic are updated in a backward pass through each step t.
+            :arg reward: the value of subtree evaluation from the current agent's perspective.
+        """
 
-        """ Update current node, including Q-value and #visit. """
-        self.q_value = ((self.n_visits * self.q_value) + reward) / (self.n_visits + 1)
-        self.n_visits += 1  # Count visit.
-        if reward > 0:
-            self.n_visits += 1
+        self.visit_num += 1  # N(s_t,a_t)+1
+        self.w_value += reward  # W(s_t,a_t)+v
+        self.q_value = self.w_value / self.visit_num
 
-        # If it is not root, this node's parent should be updated first.
         if self.parent:
             self.parent.update(-reward)
 
     def get_ucb(self, c):
         """ Calculate the upper-confidence-bound (UCB) of some node.
-
             :arg: c hyper-parameter c is in (0, inf),
-            UCB = [quality / times] + C * [sqrt(2 * ln(total_times) / times)]. """
+            :return UCB value
+            UCB = [quality / times] + C * [sqrt(2 * ln(total_times) / times)].
+        """
 
         # Left part of UCB
-        exploitation_score = self.q_value / (self.n_visits + 1)
+        exploitation_score = self.q_value / (self.visit_num + 1)
         # Right part of UCB
-        exploration_score = np.sqrt(2 * np.log(self.parent.n_visits) / (self.n_visits + 1))
+        exploration_score = np.sqrt(2 * np.log(self.parent.visit_num) / (self.visit_num + 1))
 
         return exploitation_score + c * exploration_score
 
