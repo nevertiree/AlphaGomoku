@@ -6,7 +6,7 @@ import numpy as np
 class Node(object):
     """A tree node in the Monte Carlo Tree Search. """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, prob=1.0):
         self.parent = parent
         self.children = {}  # child nodes
 
@@ -15,7 +15,7 @@ class Node(object):
         self.q_value = 0  # Q(s,a) is the mean action-value (Q-value)
 
         # Note that P(s,a) is used in AlphaGoZero, not in pure Monte Carlo Tree Search)
-        self.prob = 1  # P(s,a) is the prior probability of selecting this node
+        self.prob = prob  # P(s,a) is the prior probability of selecting this node
 
     def select(self, c=5):
         """ [Select phase]
@@ -43,7 +43,7 @@ class Node(object):
             if isinstance(action, list):
                 raise TypeError("Full expansion need an action list, but got ", type(action))
             for a in action:
-                self.children[a] = Node(self)
+                self.children[a] = Node(self, prob=1/len(action))  # Initial all actions with uniform dist.
         else:  # Dynamic Expansion
             if isinstance(action, int):
                 raise TypeError("Full expansion need an integer action, but got ", type(action))

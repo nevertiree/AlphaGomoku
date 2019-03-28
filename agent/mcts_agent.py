@@ -28,6 +28,8 @@ class MCTSMetaPlayer(meta_player.MetaPlayer):
         self.train_episode = train_episode
         self.last_move = -1
 
+        self.train_mode = True
+
     def set_player_index(self, p):
         self.player = p
 
@@ -35,7 +37,14 @@ class MCTSMetaPlayer(meta_player.MetaPlayer):
         self._update_current_node(-1)
 
     def select_action(self, state):
-        """ Select action according to current state. """
+        """ Select action according to current state.
+             :arg state: dict, complete game information
+                ['state']: board state,
+                ['action']: available action lists,
+                ['terminal']: bool, whether reach terminal,
+                ['reward']: int, complete reward in the game.
+                ['last_move']: int,last move in current episode.
+            :return: selected action. """
 
         available_action_list = state["action"]
 
@@ -47,42 +56,28 @@ class MCTSMetaPlayer(meta_player.MetaPlayer):
             print("Reach Terminal.")
             return -1
 
-        move = self._search_action(state, train_mode=True)  # Choose an action
-        print("[MCTS %s]" % move, end=" ")
-
-        return move
-
-    def _search_action(self, state, train_mode=True):
-        """ Runs all play-outs sequentially and returns the most visited action.
-
-            :arg state: dict, complete game information
-                ['state']: board state,
-                ['action']: available action lists,
-                ['terminal']: bool, whether reach terminal,
-                ['reward']: int, complete reward in the game.
-                ['last_move']: int,last move in current episode.
-            :arg train_mode: boolean
-                Whether train model before feedback.
-            :return: selected action. """
-
         # Update the child node corresponding to the opponent's action to the new root node.
         self._clone(state)
         self._update_current_node(state["last_move"])
 
-        root = self.root
-
-        if train_mode:  # Training
+        if self.train_mode:  # Training
             for _ in range(self.train_episode):
-                self._train(state=state, env=copy.deepcopy(self.env))
+                self._simulate(state=state, env=copy.deepcopy(self.env))
 
-        # Select the most visited action.
-        selected_action = self._select_next_move(root)
-        self.last_move = selected_action
+        """ Select the most frequent visited action of current node. """
+        if not self.root.children:
+            raise ValueError("Current node has no sub-node. ")
+
+        # Sort sub-node according to visited num.
+        sorted_node_list = sorted(self.root.children.items(),
+                                  key=lambda sub_node: (sub_node[1].visit_num,
+                                                        sub_node[1].q_value))
+        self.last_move = sorted_node_list[-1][0]
 
         # Update the child node corresponding to the played action to the new root node.
         self._update_current_node(self.last_move)
 
-        return selected_action
+        return self.last_move
 
     def _update_current_node(self, last_move):
         """ Update current tree node to its child node according to the lasted move.
@@ -104,7 +99,7 @@ class MCTSMetaPlayer(meta_player.MetaPlayer):
         else:
             self.root = Node(None)  # Create a new child node.
 
-    def _train(self, state, env):
+    def _simulate(self, state, env):
         """ Run a single episode from the root to the leaf,
             getting a value at the leaf and propagating it back through its parents.
 
@@ -154,21 +149,6 @@ class MCTSMetaPlayer(meta_player.MetaPlayer):
             policy beyond the tree. 
         """
         node.update(reward)
-
-    def _select_next_move(self, node=None):
-        """ Select the most frequent visited action of current node.
-         :return: selected action, int. """
-
-        if node:
-            self.root = node
-
-        if not self.root.children:
-            raise ValueError("Current node has no sub-node. ")
-
-        value_sorted_node_list = sorted(self.root.children.items(),
-                                        key=lambda sub_node: (sub_node[1].visit_num,
-                                                              sub_node[1].q_value))
-        return max(value_sorted_node_list)[0]
 
     def _clone(self, state):
         self.env.board_state = state['state']
